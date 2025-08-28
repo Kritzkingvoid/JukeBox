@@ -44,6 +44,7 @@ namespace Jukebox_Mascot
         private int CURRENT_MUSIC_NOTE_FRAME = 0;
         private int CURRENT_TRACK_INDEX = 0;
         private int FRAME_RATE = 31;
+        private string MUSIC_DIR = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Music");
 
         private BitmapImage MUSIC_NOTE_SHEET;
         private BitmapImage JUKEBOX_FUNNY_SHEET;
@@ -199,14 +200,24 @@ namespace Jukebox_Mascot
         private void InitializeMusic()
         {
             PLAYER = new MediaPlayer();
-            string musicDir = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Music");
-
-            if (!Directory.Exists(musicDir))
+            if (MUSIC_DIR == "Music")
             {
-                Directory.CreateDirectory(musicDir);
+                MUSIC_DIR = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Music");
             }
 
-            MUSIC_FILES = Directory.GetFiles(musicDir, "*.mp3").ToList();
+            if (!Directory.Exists(MUSIC_DIR))
+            {
+                Directory.CreateDirectory(MUSIC_DIR);
+            }
+
+            MUSIC_FILES = Directory.GetFiles(MUSIC_DIR, "*.mp3", SearchOption.AllDirectories)
+            .Union(Directory.GetFiles(MUSIC_DIR, "*.flac", SearchOption.AllDirectories))
+            .Union(Directory.GetFiles(MUSIC_DIR, "*.wav", SearchOption.AllDirectories))
+            .Union(Directory.GetFiles(MUSIC_DIR, "*.ogg", SearchOption.AllDirectories))
+            .Union(Directory.GetFiles(MUSIC_DIR, "*.m4a", SearchOption.AllDirectories))
+            .Union(Directory.GetFiles(MUSIC_DIR, "*.wma", SearchOption.AllDirectories))
+            .Union(Directory.GetFiles(MUSIC_DIR, "*.aac", SearchOption.AllDirectories))
+            .ToList();
 
             if (MUSIC_FILES.Count == 0)
             {
@@ -512,6 +523,11 @@ namespace Jukebox_Mascot
                         {
                             FRAME_RATE = intValue;
                         }
+                        break;
+                    }
+                    case "MUSIC_DIR":
+                    {
+                        MUSIC_DIR = value;
                         break;
                     }
                 }

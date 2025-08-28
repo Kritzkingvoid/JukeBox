@@ -104,7 +104,7 @@
     <Content Include="Config.txt">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
-    <Compile Include="Music\PUT_MP3_FILES_HERE.txt">
+    <Compile Include="Music\PUT_MUSIC_FILES_HERE.txt">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Compile>
     <Content Include="icon2.ico">
