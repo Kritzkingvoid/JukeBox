@@ -1,4 +1,4 @@
-﻿//RiceShower//Tachyon//Tokai//Oguri//Pasa
+﻿//RiceShower//Tachyon//Teio//Oguri//Pasa
 START_CHAR=Tachyon
 ALLOW_RANDOM_MASCOT=false
 ALLOW_MUSIC_NOTES=true
