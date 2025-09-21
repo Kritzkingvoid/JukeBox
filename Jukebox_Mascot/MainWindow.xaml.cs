@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
+using System.IO;
 using System.Linq;
 using System.Windows;
 using System.Windows.Forms;
@@ -9,8 +10,8 @@ using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
-using System.IO;
-using System.Data.SqlTypes;
+using Windows.Media.Control;
+using WindowsMediaController;
 
 namespace Jukebox_Mascot
 {
@@ -62,6 +63,8 @@ namespace Jukebox_Mascot
         private bool ALLOW_RANDOM_MASCOT = true;
         private bool ALLOW_MUSIC_NOTES = true;
         private bool IS_RANDOM = false;
+        private bool OTHER_MEDIA_TRACKED = false;
+        private string OTHER_MEDIA_CURRENT_TRACK = "";
 
         private double SCROLL_POS;
 
@@ -69,7 +72,8 @@ namespace Jukebox_Mascot
         private List<string> MUSIC_FILES = new List<string>();
 
         private MediaPlayer PLAYER;
-
+        private MediaManager MEDIA_MANAGER;
+        private MediaManager.MediaSession CURRENT_SESSION;
         private BitmapImage LoadSprite(string filefolder, string fileName, string rootFolder = "Characters")
         {
             string path = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "SpriteSheet", rootFolder, filefolder, fileName);
@@ -124,7 +128,7 @@ namespace Jukebox_Mascot
             TRAY_ICON?.Dispose();
             System.Windows.Application.Current.Shutdown();
         }
-        private int PlayAnimation(BitmapImage sheet,int currentFrame,int frameCount,int frameWidth,int frameHeight,System.Windows.Controls.Image targetImage,bool reverse = false)
+        private int PlayAnimation(BitmapImage sheet, int currentFrame, int frameCount, int frameWidth, int frameHeight, System.Windows.Controls.Image targetImage, bool reverse = false)
         {
             if (sheet == null)
                 return currentFrame;
@@ -138,7 +142,7 @@ namespace Jukebox_Mascot
             targetImage.Source = new CroppedBitmap(sheet, new Int32Rect(x, y, frameWidth, frameHeight));
 
             if (!reverse)
-            {             
+            {
                 return (currentFrame + 1) % frameCount;
             }
             else
@@ -157,14 +161,82 @@ namespace Jukebox_Mascot
             }
         }
 
+        private void UpdateMediaProperties(MediaManager.MediaSession sender, GlobalSystemMediaTransportControlsSessionMediaProperties mediaProperties)
+        {
+            if (mediaProperties == null)
+            {
+                OTHER_MEDIA_CURRENT_TRACK = "";
+            }
+            GC.Collect(0);
+
+            if (CURRENT_SESSION == sender)
+            {
+                // Get the name and the artist of the current track
+                string title = string.IsNullOrEmpty(mediaProperties.Title) ? "Unkown Title" : mediaProperties.Title;
+                string artist = string.IsNullOrEmpty(mediaProperties.Artist) ? "Unknown Artist" : mediaProperties.Artist;
+                OTHER_MEDIA_CURRENT_TRACK = $"🎵 Now Playing: {title} by {artist} 🎵";
+
+                this.Dispatcher.Invoke(() =>
+                {
+                    ScrollingText.Text = OTHER_MEDIA_CURRENT_TRACK;
+                    ReopenScrollingBorder();
+                    if (ALLOW_RANDOM_MASCOT)
+                    {
+                        SwitchToRandomCharacter();
+                    }
+                    if (PLAY_INTRO_ON_NEW_SONG)
+                    {
+                        JukeBoxSprite.Source = null;
+                        IS_INTRO = true;
+                        CURRENT_INTRO_FRAME = 0;
+                        CURRENT_JUKEBOX_FRAME = 0;
+                    }
+                });
+            }
+        }
+
+        private void SenderPlaybackStateChanged(MediaManager.MediaSession sender, GlobalSystemMediaTransportControlsSessionPlaybackInfo args)
+        {
+            switch (args.PlaybackStatus)
+            {
+                /*  
+                 *  This allows for different outcomes based on:
+                 *  if the media is closed, opened, changing, stopped, playing, or paused.
+                 *  So it can be used for different animations or actions, which would be cool.
+                 */
+                case GlobalSystemMediaTransportControlsSessionPlaybackStatus.Playing:
+                case GlobalSystemMediaTransportControlsSessionPlaybackStatus.Changing:
+                    CURRENT_SESSION = sender;
+                    /*
+                     * Calling this here when it is already being listened to seems redundant but it is needed for when the user pauses/unpauses or starts a new song
+                     * The listener exists for automatic changes, such as spotify going to the next playlist.
+                     */
+                    UpdateMediaProperties(sender, sender.ControlSession.TryGetMediaPropertiesAsync().AsTask().Result);
+                    break;
+                default:
+                    break;
+            }
+        }
+
+        private void InitializeMediaManager()
+        {
+            MEDIA_MANAGER = new MediaManager();
+
+            MEDIA_MANAGER.OnAnyPlaybackStateChanged += SenderPlaybackStateChanged;
+            MEDIA_MANAGER.OnAnyMediaPropertyChanged += UpdateMediaProperties;
+
+            // Start listening
+            MEDIA_MANAGER.Start();
+        }
+
         private void InitializeAnimations()
         {
-            MASTER_TIMER = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(FRAME_RATE)};
+            MASTER_TIMER = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(FRAME_RATE) };
             MASTER_TIMER.Tick += (s, e) =>
             {
                 if (IS_INTRO)
                 {
-                    CURRENT_INTRO_FRAME = PlayAnimation(INTRO_SHEET, CURRENT_INTRO_FRAME, INTRO_FRAME_COUNT,FRAME_WIDTH, FRAME_HEIGHT, SpriteImage);
+                    CURRENT_INTRO_FRAME = PlayAnimation(INTRO_SHEET, CURRENT_INTRO_FRAME, INTRO_FRAME_COUNT, FRAME_WIDTH, FRAME_HEIGHT, SpriteImage);
 
                     if (CURRENT_INTRO_FRAME == 0)
                     {
@@ -223,10 +295,10 @@ namespace Jukebox_Mascot
         private void LoadTrack(int index)
         {
             if (index < 0 || index >= MUSIC_FILES.Count)
-            {           
+            {
                 return;
             }
-     
+
             string filePath = MUSIC_FILES[index];
             PLAYER.Open(new Uri(filePath));
 
@@ -247,13 +319,12 @@ namespace Jukebox_Mascot
             }
         }
 
-
         private void PlayMusic() => PLAYER.Play();
         private void PauseMusic() => PLAYER.Pause();
 
         private void NextTrack()
         {
-            if(MUSIC_FILES.Count <= 0)
+            if (MUSIC_FILES.Count <= 0)
             {
                 return;
             }
@@ -294,10 +365,7 @@ namespace Jukebox_Mascot
                 else
                 {
                     openTimer.Stop();
-                    string filePath = MUSIC_FILES[CURRENT_TRACK_INDEX];
-                    string songName = System.IO.Path.GetFileNameWithoutExtension(filePath);
-                    ScrollingText.Text = $"🎵 Now Playing: {songName} 🎵";
-                    ScrollingText.Visibility = Visibility.Visible;                    
+                    ScrollingText.Visibility = Visibility.Visible;
                     StartScrolling();
                 }
             };
@@ -348,6 +416,7 @@ namespace Jukebox_Mascot
         {
             TRAY_ICON.Visible = false;
             string exePath = Process.GetCurrentProcess().MainModule.FileName;
+            SaveMasterConfig();
             Process.Start(exePath);
             System.Windows.Application.Current.Shutdown();
         }
@@ -356,7 +425,9 @@ namespace Jukebox_Mascot
         {
             TRAY_ICON.Visible = false;
             TRAY_ICON?.Dispose();
+            MEDIA_MANAGER?.Dispose();
             MASTER_TIMER.Stop();
+            SaveMasterConfig();
             System.Windows.Application.Current.Shutdown();
         }
         private void SetupTrayIcon()
@@ -367,24 +438,62 @@ namespace Jukebox_Mascot
             TRAY_ICON.Text = "Jukebox";
 
             var menu = new ContextMenuStrip();
-            menu.Items.Add("Play", null, (s, e) => PlayMusic());
-            menu.Items.Add("Pause", null, (s, e) => PauseMusic());
-            menu.Items.Add("Next Track", null, (s, e) => NextTrack());
 
-            var randomChar = new ToolStripMenuItem("Random Characters") { CheckOnClick = true };
+            // Save the buttons in variables so that they can be disabled/enabled later if needed
+            var playButton = new ToolStripMenuItem("Play") { Enabled = !OTHER_MEDIA_TRACKED };
+            playButton.Click += (sender, e) => PlayMusic();
+
+            var pauseButton = new ToolStripMenuItem("Pause") { Enabled = !OTHER_MEDIA_TRACKED };
+            pauseButton.Click += (sender, e) => PauseMusic();
+
+            var nextButton = new ToolStripMenuItem("Next Track") { Enabled = !OTHER_MEDIA_TRACKED };
+            nextButton.Click += (sender, e) => NextTrack();
+
+            var randomChar = new ToolStripMenuItem("Random Characters") { CheckOnClick = true, Checked = ALLOW_RANDOM_MASCOT };
             randomChar.CheckedChanged += (s, e) =>
             {
                 ALLOW_RANDOM_MASCOT = randomChar.Checked;
             };
 
-            var randomItem = new ToolStripMenuItem("Random Music") { CheckOnClick = true };
+            var randomItem = new ToolStripMenuItem("Random Music") { CheckOnClick = true, Enabled = !OTHER_MEDIA_TRACKED };
             randomItem.CheckedChanged += (s, e) =>
-            { 
+            {
                 IS_RANDOM = randomItem.Checked;
             };
 
+            var otherMediaToggle = new ToolStripMenuItem("Track Other Media") { CheckOnClick = true, Checked = OTHER_MEDIA_TRACKED };
+            otherMediaToggle.CheckedChanged += (s, e) =>
+            {
+                OTHER_MEDIA_TRACKED = otherMediaToggle.Checked;
+
+                // If the spotify tracker is enabled, stop the user from using the built in music player
+                playButton.Enabled = !OTHER_MEDIA_TRACKED;
+                pauseButton.Enabled = !OTHER_MEDIA_TRACKED;
+                nextButton.Enabled = !OTHER_MEDIA_TRACKED;
+                randomItem.Enabled = !OTHER_MEDIA_TRACKED;
+
+                // Pause the music if tracking spotify
+                if (OTHER_MEDIA_TRACKED)
+                {
+                    PauseMusic();
+
+                    if (MEDIA_MANAGER == null)
+                    {
+                        InitializeMediaManager();
+                    }
+                }
+                else
+                {
+                    MEDIA_MANAGER?.Dispose();
+                }
+            };
+
+            menu.Items.Add(playButton);
+            menu.Items.Add(pauseButton);
+            menu.Items.Add(nextButton);
             menu.Items.Add(randomItem);
-            menu.Items.Add(randomChar); 
+            menu.Items.Add(randomChar);
+            menu.Items.Add(otherMediaToggle);
             menu.Items.Add(new ToolStripSeparator());
             menu.Items.Add("Reappear", null, (s, e) => ResetApp());
             menu.Items.Add("Close", null, (s, e) => CloseApp());
@@ -403,9 +512,10 @@ namespace Jukebox_Mascot
             LoadConfigChar();
             SetupTrayIcon();
             LoadSpritesSheet();
-            LoadMascotList(); 
+            LoadMascotList();
             InitializeAnimations();
             InitializeMusic();
+            if (OTHER_MEDIA_TRACKED) InitializeMediaManager();
         }
         private void JukeBoxSprite_Click(object sender, MouseButtonEventArgs e)
         {
@@ -413,8 +523,8 @@ namespace Jukebox_Mascot
 
             CURRENT_MASCOT_INDEX = (CURRENT_MASCOT_INDEX + 1) % MASCOTS.Count;
             START_CHAR = MASCOTS[CURRENT_MASCOT_INDEX];
-            
-            
+
+
             INTRO_SHEET = null;
             DANCE_SHEET = null;
             SpriteImage.Source = null;
@@ -429,7 +539,7 @@ namespace Jukebox_Mascot
 
 
             SpriteLabel.Content = $"Mascot: {START_CHAR}";
-        }     
+        }
         private void SwitchToRandomCharacter()
         {
             if (MASCOTS == null || MASCOTS.Count == 0)
@@ -459,6 +569,22 @@ namespace Jukebox_Mascot
             JukeBoxSprite.Source = null;
         }
 
+        private void SaveMasterConfig()
+        {
+            string path = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Config.txt");
+
+            var lines = new List<string>
+            {
+                $"START_CHAR={START_CHAR}",
+                $"ALLOW_RANDOM_MASCOT={ALLOW_RANDOM_MASCOT}",
+                $"ALLOW_MUSIC_NOTES={ALLOW_MUSIC_NOTES}",
+                $"SPRITE_SPEED={FRAME_RATE}",
+                $"TRACK_OTHER_MEDIA={OTHER_MEDIA_TRACKED}"
+            };
+
+            File.WriteAllLines(path, lines);
+        }
+
         private void LoadMasterConfig()
         {
             string path = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Config.txt");
@@ -486,34 +612,42 @@ namespace Jukebox_Mascot
                 switch (key.ToUpper())
                 {
                     case "START_CHAR":
-                    {
-                        START_CHAR = value;
-                        break;
-                    }
+                        {
+                            START_CHAR = value;
+                            break;
+                        }
                     case "ALLOW_RANDOM_MASCOT":
-                    {
-                        if (bool.TryParse(value, out bool boolValue))
                         {
-                            ALLOW_RANDOM_MASCOT = boolValue;
+                            if (bool.TryParse(value, out bool boolValue))
+                            {
+                                ALLOW_RANDOM_MASCOT = boolValue;
+                            }
+                            break;
                         }
-                        break;
-                    }
                     case "ALLOW_MUSIC_NOTES":
-                    {
-                        if (bool.TryParse(value, out bool boolValue2))
                         {
-                            ALLOW_MUSIC_NOTES = boolValue2;
+                            if (bool.TryParse(value, out bool boolValue2))
+                            {
+                                ALLOW_MUSIC_NOTES = boolValue2;
+                            }
+                            break;
                         }
-                        break;
-                    }
                     case "SPRITE_SPEED":
-                    {
-                        if (int.TryParse(value, out int intValue))
                         {
-                            FRAME_RATE = intValue;
+                            if (int.TryParse(value, out int intValue))
+                            {
+                                FRAME_RATE = intValue;
+                            }
+                            break;
                         }
-                        break;
-                    }
+                    case "TRACK_OTHER_MEDIA":
+                        {
+                            if (bool.TryParse(value, out bool boolValue3))
+                            {
+                                OTHER_MEDIA_TRACKED = boolValue3;
+                            }
+                            break;
+                        }
                 }
             }
         }
